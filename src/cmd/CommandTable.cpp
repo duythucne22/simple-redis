@@ -62,3 +62,11 @@ void CommandTable::dispatch(Database& db, Connection& conn,
     // Dispatch to the handler.
     entry.handler(db, conn, args);
 }
+
+bool CommandTable::isWriteCommand(const std::string& name) const {
+    std::string upper = name;
+    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    auto it = table_.find(upper);
+    if (it == table_.end()) return false;
+    return it->second.isWrite;
+}

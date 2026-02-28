@@ -35,6 +35,10 @@ public:
     /// Register a command entry. Used by command modules during init.
     void registerCommand(CommandEntry entry);
 
+    /// Return true if the named command is flagged as a write command.
+    /// Used by the AOF system to decide which commands to log.
+    bool isWriteCommand(const std::string& name) const;
+
 private:
     std::unordered_map<std::string, CommandEntry> table_;
 };

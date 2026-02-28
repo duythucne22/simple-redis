@@ -33,8 +33,14 @@ CMD_SRCS = src/cmd/CommandTable.cpp \
 
 CMD_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(CMD_SRCS))
 
+# ── Persistence layer source files ─────────────────────────────────────────
+PERSIST_SRCS = src/persistence/AOFWriter.cpp \
+               src/persistence/AOFLoader.cpp
+
+PERSIST_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(PERSIST_SRCS))
+
 # ── All object files (excluding main) ───────────────────────────────────────
-ALL_OBJS = $(NET_OBJS) $(PROTO_OBJS) $(STORE_OBJS) $(CMD_OBJS)
+ALL_OBJS = $(NET_OBJS) $(PROTO_OBJS) $(STORE_OBJS) $(CMD_OBJS) $(PERSIST_OBJS)
 
 # ── Server binary ──────────────────────────────────────────────────────────
 MAIN_OBJ = $(BUILD_DIR)/main.o

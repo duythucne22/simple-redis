@@ -2,7 +2,10 @@
 #include "net/Connection.h"
 #include "net/EventLoop.h"
 #include "net/Listener.h"
+#include "persistence/AOFLoader.h"
+#include "persistence/AOFWriter.h"
 #include "proto/RespParser.h"
+#include "proto/RespSerializer.h"
 #include "store/Database.h"
 
 #include <csignal>
@@ -12,6 +15,10 @@
 #include <unordered_map>
 #include <vector>
 #include <sys/resource.h>  // setrlimit
+
+// ── AOF configuration constants ────────────────────────────────────────────
+static constexpr const char* kAOFFilename = "appendonly.aof";
+static constexpr auto kAOFPolicy = AOFWriter::FsyncPolicy::EVERYSEC;
 
 // ── Global state (acceptable per understanding doc §10 — signal handler) ──
 static volatile sig_atomic_t g_running = 1;
@@ -57,10 +64,34 @@ int main(int argc, char* argv[]) {
     CommandTable commandTable;
     RespParser   parser;
 
-    // ── Wire active expiry timer (Phase 3) ─────────────────────────────
-    // Every 100ms, expire up to 200 keys from the TTL heap.
-    eventLoop.setTimerCallback([&db]() {
+    // ── AOF persistence (Phase 4) ──────────────────────────────────────
+    AOFWriter aofWriter(kAOFFilename, kAOFPolicy);
+
+    // Register BGREWRITEAOF command (needs AOFWriter reference via capture).
+    commandTable.registerCommand({"BGREWRITEAOF", 1, false,
+        [&aofWriter](Database& cmdDb, Connection& conn,
+                     const std::vector<std::string>& /*args*/) {
+            aofWriter.triggerRewrite(cmdDb);
+            RespSerializer::writeSimpleString(conn.outgoing(),
+                "Background append only file rewriting started");
+        }
+    });
+
+    // Load AOF on startup (replay commands to reconstruct database).
+    {
+        AOFLoader loader;
+        int loaded = loader.load(kAOFFilename, commandTable, db);
+        if (loaded > 0) {
+            std::printf("DB loaded from AOF: %d commands replayed\n", loaded);
+        }
+    }
+
+    // ── Wire active expiry timer (Phase 3) + AOF tick (Phase 4) ────────
+    // Every 100ms: expire keys, fsync if EVERYSEC, check rewrite child.
+    eventLoop.setTimerCallback([&db, &aofWriter]() {
         db.activeExpireCycle(200);
+        aofWriter.tick();
+        aofWriter.checkRewriteComplete();
     }, 100);
 
     // ── Connection map: fd → Connection ────────────────────────────────
@@ -114,6 +145,12 @@ int main(int argc, char* argv[]) {
                     if (!cmd.has_value()) break;  // incomplete frame
                     if (cmd->empty()) continue;   // empty command (null array)
                     commandTable.dispatch(db, conn, *cmd);
+                    // INV-1: Log to AOF only AFTER successful dispatch,
+                    // and only for write commands.
+                    if (aofWriter.isEnabled() &&
+                        commandTable.isWriteCommand((*cmd)[0])) {
+                        aofWriter.log(*cmd);
+                    }
                 }
                 if (conn.outgoing().readableBytes() > 0) {
                     conn.setWantWrite(true);

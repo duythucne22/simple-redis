@@ -21,7 +21,8 @@ PROTO_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(PROTO_SRCS))
 # ── Store layer source files ────────────────────────────────────────────────
 STORE_SRCS = src/store/RedisObject.cpp \
              src/store/HashTable.cpp \
-             src/store/Database.cpp
+             src/store/Database.cpp \
+             src/store/TTLHeap.cpp
 
 STORE_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(STORE_SRCS))
 
@@ -43,11 +44,12 @@ SERVER   = $(BUILD_DIR)/simple-redis
 TEST_BUFFER      = $(BUILD_DIR)/test_buffer
 TEST_RESP_PARSER = $(BUILD_DIR)/test_resp_parser
 TEST_HASH_TABLE  = $(BUILD_DIR)/test_hash_table
+TEST_TTL_HEAP    = $(BUILD_DIR)/test_ttl_heap
 
 # ── Targets ────────────────────────────────────────────────────────────────
 .PHONY: all clean test
 
-all: $(SERVER) $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE)
+all: $(SERVER) $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE) $(TEST_TTL_HEAP)
 
 $(SERVER): $(ALL_OBJS) $(MAIN_OBJ)
 	@mkdir -p $(dir $@)
@@ -69,11 +71,16 @@ $(TEST_HASH_TABLE): tests/unit/test_hash_table.cpp $(BUILD_DIR)/store/HashTable.
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
 
-test: $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE)
+$(TEST_TTL_HEAP): tests/unit/test_ttl_heap.cpp $(BUILD_DIR)/store/TTLHeap.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
+
+test: $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE) $(TEST_TTL_HEAP)
 	@echo "=== Running unit tests ==="
 	./$(TEST_BUFFER)
 	./$(TEST_RESP_PARSER)
 	./$(TEST_HASH_TABLE)
+	./$(TEST_TTL_HEAP)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -57,6 +57,12 @@ int main(int argc, char* argv[]) {
     CommandTable commandTable;
     RespParser   parser;
 
+    // ── Wire active expiry timer (Phase 3) ─────────────────────────────
+    // Every 100ms, expire up to 200 keys from the TTL heap.
+    eventLoop.setTimerCallback([&db]() {
+        db.activeExpireCycle(200);
+    }, 100);
+
     // ── Connection map: fd → Connection ────────────────────────────────
     std::unordered_map<int, std::unique_ptr<Connection>> connections;
 

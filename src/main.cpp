@@ -1,6 +1,9 @@
+#include "cmd/CommandTable.h"
 #include "net/Connection.h"
 #include "net/EventLoop.h"
 #include "net/Listener.h"
+#include "proto/RespParser.h"
+#include "store/Database.h"
 
 #include <csignal>
 #include <cstdio>
@@ -49,6 +52,11 @@ int main(int argc, char* argv[]) {
 
     std::printf("Listening on port %d\n", port);
 
+    // ── Database + Command Engine ──────────────────────────────────────
+    Database     db;
+    CommandTable commandTable;
+    RespParser   parser;
+
     // ── Connection map: fd → Connection ────────────────────────────────
     std::unordered_map<int, std::unique_ptr<Connection>> connections;
 
@@ -94,12 +102,14 @@ int main(int argc, char* argv[]) {
                     // the connection alive to flush any outgoing data.
                     conn.setWantRead(false);
                 }
-                // ── Echo logic: move incoming → outgoing ───────────────
-                size_t avail = conn.incoming().readableBytes();
-                if (avail > 0) {
-                    conn.outgoing().append(conn.incoming().readablePtr(),
-                                           avail);
-                    conn.incoming().consume(avail);
+                // ── Parse/dispatch loop: handle pipelining ─────────────
+                while (true) {
+                    auto cmd = parser.parse(conn.incoming());
+                    if (!cmd.has_value()) break;  // incomplete frame
+                    if (cmd->empty()) continue;   // empty command (null array)
+                    commandTable.dispatch(db, conn, *cmd);
+                }
+                if (conn.outgoing().readableBytes() > 0) {
                     conn.setWantWrite(true);
                 }
             }
@@ -126,6 +136,9 @@ int main(int argc, char* argv[]) {
                 eventLoop.modFd(fd, desired);
             }
         }
+
+        // ── Advance incremental rehashing ───────────────────────────────
+        db.rehashStep();
 
         // ── Cleanup closed connections ─────────────────────────────────
         std::vector<int> toClose;

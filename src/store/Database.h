@@ -1,7 +1,9 @@
 #pragma once
 
 #include "store/HashTable.h"
+#include "store/TTLHeap.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -34,12 +36,27 @@ public:
     /// Advance incremental rehashing — call once per event loop tick.
     void rehashStep();
 
+    /// Set expiration on an existing key. expireAtMs = ms since epoch.
+    /// Returns true if the key exists (and TTL was set), false otherwise.
+    bool setExpire(const std::string& key, int64_t expireAtMs);
+
+    /// Remove expiration from a key, making it permanent.
+    void removeExpire(const std::string& key);
+
+    /// Return remaining TTL in milliseconds. -1 = no TTL, -2 = key doesn't exist.
+    int64_t ttl(const std::string& key);
+
+    /// Proactively expire up to maxWork keys from the TTL heap.
+    /// Called by the timer callback every 100ms.
+    void activeExpireCycle(int maxWork);
+
     /// Return a mutable reference to the underlying hash table.
     /// Used by future phases (TTL, etc.) that need direct entry access.
     HashTable& table() { return table_; }
 
 private:
     HashTable table_;
+    TTLHeap ttlHeap_;
 
     /// Check if an entry is expired and delete it if so (lazy expiry).
     /// Returns true if the entry was expired and removed.

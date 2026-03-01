@@ -22,14 +22,19 @@ PROTO_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(PROTO_SRCS))
 STORE_SRCS = src/store/RedisObject.cpp \
              src/store/HashTable.cpp \
              src/store/Database.cpp \
-             src/store/TTLHeap.cpp
+             src/store/TTLHeap.cpp \
+             src/store/Skiplist.cpp
 
 STORE_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(STORE_SRCS))
 
 # ── Command layer source files ──────────────────────────────────────────────
 CMD_SRCS = src/cmd/CommandTable.cpp \
            src/cmd/StringCommands.cpp \
-           src/cmd/KeyCommands.cpp
+           src/cmd/KeyCommands.cpp \
+           src/cmd/ListCommands.cpp \
+           src/cmd/HashCommands.cpp \
+           src/cmd/SetCommands.cpp \
+           src/cmd/ZSetCommands.cpp
 
 CMD_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(CMD_SRCS))
 
@@ -52,11 +57,12 @@ TEST_RESP_PARSER = $(BUILD_DIR)/test_resp_parser
 TEST_HASH_TABLE  = $(BUILD_DIR)/test_hash_table
 TEST_TTL_HEAP    = $(BUILD_DIR)/test_ttl_heap
 TEST_AOF         = $(BUILD_DIR)/test_aof
+TEST_SKIPLIST    = $(BUILD_DIR)/test_skiplist
 
 # ── Targets ────────────────────────────────────────────────────────────────
 .PHONY: all clean test
 
-all: $(SERVER) $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE) $(TEST_TTL_HEAP) $(TEST_AOF)
+all: $(SERVER) $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE) $(TEST_TTL_HEAP) $(TEST_AOF) $(TEST_SKIPLIST)
 
 $(SERVER): $(ALL_OBJS) $(MAIN_OBJ)
 	@mkdir -p $(dir $@)
@@ -74,7 +80,7 @@ $(TEST_RESP_PARSER): tests/unit/test_resp_parser.cpp $(BUILD_DIR)/net/Buffer.o $
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
 
-$(TEST_HASH_TABLE): tests/unit/test_hash_table.cpp $(BUILD_DIR)/store/HashTable.o $(BUILD_DIR)/store/RedisObject.o
+$(TEST_HASH_TABLE): tests/unit/test_hash_table.cpp $(BUILD_DIR)/store/HashTable.o $(BUILD_DIR)/store/RedisObject.o $(BUILD_DIR)/store/Skiplist.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
 
@@ -85,17 +91,23 @@ $(TEST_TTL_HEAP): tests/unit/test_ttl_heap.cpp $(BUILD_DIR)/store/TTLHeap.o
 $(TEST_AOF): tests/unit/test_aof.cpp $(BUILD_DIR)/persistence/AOFWriter.o \
              $(BUILD_DIR)/net/Buffer.o $(BUILD_DIR)/proto/RespParser.o \
              $(BUILD_DIR)/store/RedisObject.o $(BUILD_DIR)/store/HashTable.o \
-             $(BUILD_DIR)/store/Database.o $(BUILD_DIR)/store/TTLHeap.o
+             $(BUILD_DIR)/store/Database.o $(BUILD_DIR)/store/TTLHeap.o \
+             $(BUILD_DIR)/store/Skiplist.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
 
-test: $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE) $(TEST_TTL_HEAP) $(TEST_AOF)
+$(TEST_SKIPLIST): tests/unit/test_skiplist.cpp $(BUILD_DIR)/store/Skiplist.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
+
+test: $(TEST_BUFFER) $(TEST_RESP_PARSER) $(TEST_HASH_TABLE) $(TEST_TTL_HEAP) $(TEST_AOF) $(TEST_SKIPLIST)
 	@echo "=== Running unit tests ==="
 	./$(TEST_BUFFER)
 	./$(TEST_RESP_PARSER)
 	./$(TEST_HASH_TABLE)
 	./$(TEST_TTL_HEAP)
 	./$(TEST_AOF)
+	./$(TEST_SKIPLIST)
 
 clean:
 	rm -rf $(BUILD_DIR)

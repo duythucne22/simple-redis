@@ -207,18 +207,18 @@ static void test_expire_at_default() {
 // Verifies RedisObject::createString uses INTEGER encoding for "12345".
 static void test_integer_encoding() {
     auto obj = RedisObject::createString("12345");
-    assert(obj.encoding == RedisObject::Encoding::INTEGER);
-    assert(obj.intValue == 12345);
+    assert(obj.encoding == Encoding::INTEGER);
+    assert(std::get<int64_t>(obj.data) == 12345);
     assert(obj.asString() == "12345");
 
     auto obj2 = RedisObject::createString("-42");
-    assert(obj2.encoding == RedisObject::Encoding::INTEGER);
-    assert(obj2.intValue == -42);
+    assert(obj2.encoding == Encoding::INTEGER);
+    assert(std::get<int64_t>(obj2.data) == -42);
     assert(obj2.asString() == "-42");
 
     auto obj3 = RedisObject::createString("hello");
-    assert(obj3.encoding == RedisObject::Encoding::RAW);
-    assert(obj3.strValue == "hello");
+    assert(obj3.encoding == Encoding::RAW);
+    assert(std::get<std::string>(obj3.data) == "hello");
     assert(obj3.asString() == "hello");
     check("integer_encoding", true);
 }

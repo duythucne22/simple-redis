@@ -72,6 +72,33 @@ std::vector<std::string> Database::keys() {
     return table_.keys();
 }
 
+std::pair<size_t, std::vector<std::string>>
+Database::scan(size_t cursor, size_t count, const std::string& pattern) {
+    table_.rehashStep();
+
+    auto [nextCursor, rawKeys] = table_.scan(cursor, count);
+
+    // Filter by pattern (only "*" or exact match supported).
+    // Also filter out expired keys via lazy expiry.
+    std::vector<std::string> filteredKeys;
+    for (auto& key : rawKeys) {
+        // Lazy expiry check.
+        HTEntry* entry = table_.find(key);
+        if (!entry) continue;
+        if (checkAndExpire(key, entry)) continue;
+
+        // Pattern match: "*" matches everything.
+        if (pattern == "*") {
+            filteredKeys.push_back(std::move(key));
+        } else if (key == pattern) {
+            // Simple exact match fallback (real Redis uses glob matching).
+            filteredKeys.push_back(std::move(key));
+        }
+    }
+
+    return {nextCursor, filteredKeys};
+}
+
 size_t Database::dbsize() const {
     return table_.size();
 }

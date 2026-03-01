@@ -31,6 +31,13 @@ public:
     /// Return all keys.
     std::vector<std::string> keys();
 
+    /// Scan keys starting at `cursor`, returning up to `count` keys.
+    /// If `pattern` is not "*", only keys matching the glob are returned.
+    /// Returns (nextCursor, matchingKeys). nextCursor=0 means iteration done.
+    std::pair<size_t, std::vector<std::string>> scan(size_t cursor,
+                                                      size_t count,
+                                                      const std::string& pattern);
+
     /// Return the total number of keys.
     size_t dbsize() const;
 

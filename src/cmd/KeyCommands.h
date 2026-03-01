@@ -47,4 +47,8 @@ void cmdPttl(Database& db, Connection& conn,
 void cmdDbsize(Database& db, Connection& conn,
                const std::vector<std::string>& args);
 
+/// SCAN cursor [COUNT count] [MATCH pattern] — incrementally iterate keys.
+void cmdScan(Database& db, Connection& conn,
+             const std::vector<std::string>& args);
+
 }  // namespace KeyCommands

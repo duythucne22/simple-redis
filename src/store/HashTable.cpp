@@ -212,6 +212,52 @@ std::vector<std::string> HashTable::keys() const {
     return result;
 }
 
+// ── Scan ──────────────────────────────────────────────────────────────────
+
+std::pair<size_t, std::vector<std::string>>
+HashTable::scan(size_t cursor, size_t count) const {
+    std::vector<std::string> result;
+
+    // If primary_ is empty, return cursor 0 (iteration complete, no keys).
+    if (primary_.slots == nullptr || primary_.capacity == 0) {
+        return {0, result};
+    }
+
+    // Walk slots starting from `cursor`. Each slot may have a chain of entries.
+    size_t visited = 0;
+    size_t slot = cursor;
+
+    while (visited < count && slot < primary_.capacity) {
+        HTEntry* entry = primary_.slots[slot];
+        while (entry) {
+            result.push_back(entry->key);
+            ++visited;
+            entry = entry->next;
+        }
+        ++slot;
+    }
+
+    // Also collect from rehash_ table (keys not yet migrated).
+    if (isRehashing_ && rehash_.slots != nullptr) {
+        // On the first call (cursor == 0), also scan rehash_ from slot 0.
+        // We do a full scan of rehash_ to ensure no keys are missed.
+        // This is acceptable because rehash_ is being drained.
+        if (cursor == 0) {
+            for (size_t i = 0; i < rehash_.capacity; ++i) {
+                HTEntry* entry = rehash_.slots[i];
+                while (entry) {
+                    result.push_back(entry->key);
+                    entry = entry->next;
+                }
+            }
+        }
+    }
+
+    // If we've reached the end of primary_, next cursor is 0 (done).
+    size_t nextCursor = (slot >= primary_.capacity) ? 0 : slot;
+    return {nextCursor, result};
+}
+
 // ── Incremental Rehashing ─────────────────────────────────────────────────
 
 void HashTable::triggerRehash() {

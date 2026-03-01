@@ -3,10 +3,12 @@
 #include "net/Connection.h"
 #include "proto/RespSerializer.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <climits>
 #include <cstdlib>
+#include <string>
 
 /// Return current time in milliseconds since epoch.
 static int64_t nowMs() {
@@ -37,6 +39,7 @@ void KeyCommands::registerAll(CommandTable& table) {
     table.registerCommand({"PEXPIRE",  3, true,  cmdPexpire});
     table.registerCommand({"PTTL",     2, false, cmdPttl});
     table.registerCommand({"DBSIZE",   1, false, cmdDbsize});
+    table.registerCommand({"SCAN",    -2, false, cmdScan});
 }
 
 void KeyCommands::cmdDel(Database& db, Connection& conn,
@@ -130,4 +133,55 @@ void KeyCommands::cmdDbsize(Database& db, Connection& conn,
     (void)args;
     RespSerializer::writeInteger(conn.outgoing(),
                                  static_cast<int64_t>(db.dbsize()));
+}
+
+void KeyCommands::cmdScan(Database& db, Connection& conn,
+                          const std::vector<std::string>& args) {
+    // SCAN cursor [COUNT count] [MATCH pattern]
+    // args[0] = "SCAN", args[1] = cursor, then optional pairs.
+
+    int64_t cursorVal = 0;
+    if (!parseInteger(args[1], cursorVal) || cursorVal < 0) {
+        RespSerializer::writeError(conn.outgoing(),
+                                   "ERR invalid cursor");
+        return;
+    }
+
+    size_t cursor = static_cast<size_t>(cursorVal);
+    size_t count = 10;  // default COUNT
+    std::string pattern = "*";
+
+    // Parse optional arguments (case-insensitive).
+    for (size_t i = 2; i + 1 < args.size(); i += 2) {
+        std::string option = args[i];
+        std::transform(option.begin(), option.end(), option.begin(), ::toupper);
+        if (option == "COUNT") {
+            int64_t c = 0;
+            if (!parseInteger(args[i + 1], c) || c <= 0) {
+                RespSerializer::writeError(conn.outgoing(),
+                                           "ERR syntax error");
+                return;
+            }
+            count = static_cast<size_t>(c);
+        } else if (option == "MATCH") {
+            pattern = args[i + 1];
+        } else {
+            RespSerializer::writeError(conn.outgoing(),
+                                       "ERR syntax error");
+            return;
+        }
+    }
+
+    auto [nextCursor, keys] = db.scan(cursor, count, pattern);
+
+    // SCAN returns a two-element array:
+    //   [0] = next cursor as bulk string
+    //   [1] = array of keys
+    RespSerializer::writeArrayHeader(conn.outgoing(), 2);
+    RespSerializer::writeBulkString(conn.outgoing(), std::to_string(nextCursor));
+    RespSerializer::writeArrayHeader(conn.outgoing(),
+                                     static_cast<int64_t>(keys.size()));
+    for (const auto& key : keys) {
+        RespSerializer::writeBulkString(conn.outgoing(), key);
+    }
 }

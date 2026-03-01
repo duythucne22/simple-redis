@@ -49,6 +49,12 @@ public:
     /// Collect all keys from both tables.
     std::vector<std::string> keys() const;
 
+    /// Scan keys starting at `cursor`. Returns (nextCursor, keys).
+    /// cursor=0 starts a new iteration. nextCursor=0 means iteration complete.
+    /// Scans primary_ table only (simplified — no reverse-bit iteration).
+    std::pair<size_t, std::vector<std::string>> scan(size_t cursor,
+                                                      size_t count) const;
+
     /// Perform up to nSteps incremental rehashing migrations.
     /// Called once per event loop tick to spread rehash cost.
     void rehashStep(int nSteps = 128);

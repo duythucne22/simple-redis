@@ -5,10 +5,13 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <unordered_map>
+#include <unordered_set>
 
 // ── Constructor / Destructor ────────────────────────────────────────────────
 
@@ -135,14 +138,73 @@ void AOFWriter::triggerRewrite(Database& db) {
             _exit(1);
         }
 
-        // Iterate all keys in the database and write SET + optional PEXPIRE.
+        // Iterate all keys and write type-appropriate reconstruction commands.
         auto allKeys = db.keys();
         for (const auto& key : allKeys) {
-            auto val = db.get(key);
-            if (!val.has_value()) continue;  // key expired between calls
+            HTEntry* entry = db.findEntry(key);
+            if (!entry) continue;  // key expired between calls
 
-            // Write: SET key value
-            writeRespCommand(tmpFd, {"SET", key, *val});
+            switch (entry->value.type) {
+            case DataType::STRING: {
+                // Write: SET key value
+                writeRespCommand(tmpFd, {"SET", key, entry->value.asString()});
+                break;
+            }
+            case DataType::LIST: {
+                auto& list = std::get<std::deque<std::string>>(entry->value.data);
+                // Write: RPUSH key elem1 elem2 ... (preserves order)
+                if (!list.empty()) {
+                    std::vector<std::string> cmd = {"RPUSH", key};
+                    for (const auto& elem : list) {
+                        cmd.push_back(elem);
+                    }
+                    writeRespCommand(tmpFd, cmd);
+                }
+                break;
+            }
+            case DataType::HASH: {
+                auto& hash = std::get<std::unordered_map<std::string, std::string>>(entry->value.data);
+                // Write: HSET key field1 value1 field2 value2 ...
+                if (!hash.empty()) {
+                    std::vector<std::string> cmd = {"HSET", key};
+                    for (const auto& [field, value] : hash) {
+                        cmd.push_back(field);
+                        cmd.push_back(value);
+                    }
+                    writeRespCommand(tmpFd, cmd);
+                }
+                break;
+            }
+            case DataType::SET: {
+                auto& set = std::get<std::unordered_set<std::string>>(entry->value.data);
+                // Write: SADD key member1 member2 ...
+                if (!set.empty()) {
+                    std::vector<std::string> cmd = {"SADD", key};
+                    for (const auto& member : set) {
+                        cmd.push_back(member);
+                    }
+                    writeRespCommand(tmpFd, cmd);
+                }
+                break;
+            }
+            case DataType::ZSET: {
+                auto& zset = std::get<ZSetData>(entry->value.data);
+                // Write: ZADD key score1 member1 score2 member2 ...
+                // Walk skiplist in order so replay recreates same ordering.
+                if (!zset.dict.empty()) {
+                    auto elems = zset.skiplist.rangeByRank(0, static_cast<int>(zset.skiplist.size()) - 1);
+                    std::vector<std::string> cmd = {"ZADD", key};
+                    for (const auto& [member, score] : elems) {
+                        char buf[64];
+                        std::snprintf(buf, sizeof(buf), "%.17g", score);
+                        cmd.push_back(buf);
+                        cmd.push_back(member);
+                    }
+                    writeRespCommand(tmpFd, cmd);
+                }
+                break;
+            }
+            }
 
             // If key has a TTL, write: PEXPIRE key <remaining_ms>
             int64_t remaining = db.ttl(key);

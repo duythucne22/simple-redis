@@ -34,7 +34,10 @@ CMD_SRCS = src/cmd/CommandTable.cpp \
            src/cmd/ListCommands.cpp \
            src/cmd/HashCommands.cpp \
            src/cmd/SetCommands.cpp \
-           src/cmd/ZSetCommands.cpp
+           src/cmd/ZSetCommands.cpp \
+           src/cmd/TransactionCommands.cpp \
+           src/cmd/PubSubCommands.cpp \
+           src/cmd/PubSubRegistry.cpp
 
 CMD_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(CMD_SRCS))
 

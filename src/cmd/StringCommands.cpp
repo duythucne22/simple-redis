@@ -30,10 +30,16 @@ void StringCommands::cmdSet(Database& db, Connection& conn,
 void StringCommands::cmdGet(Database& db, Connection& conn,
                             const std::vector<std::string>& args) {
     // args[0] = "GET", args[1] = key
-    auto val = db.get(args[1]);
-    if (val.has_value()) {
-        RespSerializer::writeBulkString(conn.outgoing(), *val);
-    } else {
+    HTEntry* entry = db.findEntry(args[1]);
+    if (!entry) {
         RespSerializer::writeNull(conn.outgoing());
+        return;
     }
+    if (entry->value.type != DataType::STRING) {
+        RespSerializer::writeError(conn.outgoing(),
+            "WRONGTYPE Operation against a key holding the wrong kind of value");
+        return;
+    }
+    RespSerializer::writeBulkString(conn.outgoing(),
+                                    entry->value.asString());
 }

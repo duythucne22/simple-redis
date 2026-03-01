@@ -1,6 +1,10 @@
 #include "cmd/CommandTable.h"
 #include "cmd/StringCommands.h"
 #include "cmd/KeyCommands.h"
+#include "cmd/ListCommands.h"
+#include "cmd/HashCommands.h"
+#include "cmd/SetCommands.h"
+#include "cmd/ZSetCommands.h"
 #include "net/Connection.h"
 #include "proto/RespSerializer.h"
 
@@ -8,9 +12,13 @@
 #include <cctype>
 
 CommandTable::CommandTable() {
-    // Register all Phase 2 commands.
+    // Register all commands for Phases 2-5.
     StringCommands::registerAll(*this);
     KeyCommands::registerAll(*this);
+    ListCommands::registerAll(*this);
+    HashCommands::registerAll(*this);
+    SetCommands::registerAll(*this);
+    ZSetCommands::registerAll(*this);
 }
 
 void CommandTable::registerCommand(CommandEntry entry) {

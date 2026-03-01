@@ -28,6 +28,9 @@ std::optional<std::string> Database::get(const std::string& key) {
     // Lazy expiry: check if the key has expired.
     if (checkAndExpire(key, entry)) return std::nullopt;
 
+    // Phase 5: only STRING type is returned via get().
+    if (entry->value.type != DataType::STRING) return std::nullopt;
+
     return entry->value.asString();
 }
 
@@ -120,4 +123,20 @@ void Database::activeExpireCycle(int maxWork) {
         // The heap entry is already removed by popExpired.
         table_.del(key);
     }
+}
+
+HTEntry* Database::findEntry(const std::string& key) {
+    table_.rehashStep();
+
+    HTEntry* entry = table_.find(key);
+    if (!entry) return nullptr;
+
+    // Lazy expiry check.
+    if (checkAndExpire(key, entry)) return nullptr;
+
+    return entry;
+}
+
+void Database::setObject(const std::string& key, RedisObject obj) {
+    table_.set(key, std::move(obj));
 }

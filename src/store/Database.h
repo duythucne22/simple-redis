@@ -15,10 +15,11 @@
 /// Must NOT know about: RESP, networking, command names.
 class Database {
 public:
-    /// Get the value for a key. Returns nullopt if not found or expired.
+    /// Get the value for a key (STRING type only). Returns nullopt if
+    /// not found, expired, or wrong type (non-STRING).
     std::optional<std::string> get(const std::string& key);
 
-    /// Set a key to a string value.
+    /// Set a key to a string value (clears any existing TTL).
     void set(const std::string& key, const std::string& value);
 
     /// Delete a key. Returns true if the key existed.
@@ -49,6 +50,15 @@ public:
     /// Proactively expire up to maxWork keys from the TTL heap.
     /// Called by the timer callback every 100ms.
     void activeExpireCycle(int maxWork);
+
+    /// Look up a key and return its HTEntry* (with lazy expiry check).
+    /// Returns nullptr if the key doesn't exist or is expired.
+    /// Used by Phase 5 command handlers to access non-string types directly.
+    HTEntry* findEntry(const std::string& key);
+
+    /// Insert or overwrite a key with an arbitrary RedisObject.
+    /// Does NOT clear TTL — caller manages TTL if needed.
+    void setObject(const std::string& key, RedisObject obj);
 
     /// Return a mutable reference to the underlying hash table.
     /// Used by future phases (TTL, etc.) that need direct entry access.

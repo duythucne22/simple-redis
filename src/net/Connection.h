@@ -3,6 +3,16 @@
 #include "net/Buffer.h"
 
 #include <chrono>
+#include <optional>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+/// Transaction state: queued commands waiting for EXEC.
+struct TransactionState {
+    /// Each queued command is a full argument vector (e.g., {"SET","a","1"}).
+    std::vector<std::vector<std::string>> queuedCommands;
+};
 
 /// Wraps a client file descriptor and owns its incoming/outgoing buffers.
 /// Not copyable, not movable — always held via unique_ptr.
@@ -42,6 +52,17 @@ public:
     std::chrono::steady_clock::time_point lastActivity() const {
         return lastActivity_;
     }
+
+    // ── Transaction state (Phase 6) ──────────────────────────────────
+    /// When has_value(), the connection is in MULTI mode.
+    std::optional<TransactionState> txn;
+
+    // ── Pub/Sub state (Phase 6) ──────────────────────────────────────
+    /// Channels this connection is subscribed to.
+    std::unordered_set<std::string> subscribedChannels;
+
+    /// True when the connection is in subscriber mode (subscribed to >= 1 channel).
+    bool inSubscribeMode() const { return !subscribedChannels.empty(); }
 
 private:
     static constexpr size_t kReadBufSize = 4096;

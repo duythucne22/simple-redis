@@ -1,4 +1,5 @@
 #include "cmd/CommandTable.h"
+#include "cmd/PubSubRegistry.h"
 #include "net/Connection.h"
 #include "net/EventLoop.h"
 #include "net/Listener.h"
@@ -8,6 +9,7 @@
 #include "proto/RespSerializer.h"
 #include "store/Database.h"
 
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -86,6 +88,106 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ── Pub/Sub Registry (Phase 6) ─────────────────────────────────────
+    PubSubRegistry pubsubRegistry;
+
+    // Register EXEC — needs CommandTable& and AOFWriter& to re-dispatch.
+    commandTable.registerCommand({"EXEC", 1, false,
+        [&commandTable, &aofWriter](Database& cmdDb, Connection& conn,
+                                     const std::vector<std::string>& /*args*/) {
+            if (!conn.txn.has_value()) {
+                RespSerializer::writeError(conn.outgoing(),
+                                           "ERR EXEC without MULTI");
+                return;
+            }
+
+            auto& queued = conn.txn->queuedCommands;
+
+            // Write the array header for the results.
+            RespSerializer::writeArrayHeader(conn.outgoing(),
+                                             static_cast<int64_t>(queued.size()));
+
+            // Execute each queued command.
+            for (auto& qcmd : queued) {
+                commandTable.dispatch(cmdDb, conn, qcmd);
+
+                // Log write commands to AOF.
+                if (aofWriter.isEnabled() &&
+                    commandTable.isWriteCommand(qcmd[0])) {
+                    aofWriter.log(qcmd);
+                }
+            }
+
+            // Clear transaction state.
+            conn.txn.reset();
+        }
+    });
+
+    // Register SUBSCRIBE — needs PubSubRegistry&.
+    commandTable.registerCommand({"SUBSCRIBE", -2, false,
+        [&pubsubRegistry](Database& /*cmdDb*/, Connection& conn,
+                          const std::vector<std::string>& args) {
+            // SUBSCRIBE channel [channel ...]
+            for (size_t i = 1; i < args.size(); ++i) {
+                size_t numSubs = pubsubRegistry.subscribe(args[i], conn);
+
+                // Reply: ["subscribe", channelName, numSubscriptions]
+                RespSerializer::writeArrayHeader(conn.outgoing(), 3);
+                RespSerializer::writeBulkString(conn.outgoing(), "subscribe");
+                RespSerializer::writeBulkString(conn.outgoing(), args[i]);
+                RespSerializer::writeInteger(conn.outgoing(),
+                                             static_cast<int64_t>(numSubs));
+            }
+        }
+    });
+
+    // Register UNSUBSCRIBE — needs PubSubRegistry&.
+    commandTable.registerCommand({"UNSUBSCRIBE", -1, false,
+        [&pubsubRegistry](Database& /*cmdDb*/, Connection& conn,
+                          const std::vector<std::string>& args) {
+            if (args.size() <= 1) {
+                // Unsubscribe from all channels.
+                if (conn.subscribedChannels.empty()) {
+                    // No subscriptions — reply with 0 count.
+                    RespSerializer::writeArrayHeader(conn.outgoing(), 3);
+                    RespSerializer::writeBulkString(conn.outgoing(), "unsubscribe");
+                    RespSerializer::writeNull(conn.outgoing());
+                    RespSerializer::writeInteger(conn.outgoing(), 0);
+                } else {
+                    auto channels = conn.subscribedChannels;  // copy — set will be modified
+                    for (const auto& ch : channels) {
+                        size_t remaining = pubsubRegistry.unsubscribe(ch, conn);
+                        RespSerializer::writeArrayHeader(conn.outgoing(), 3);
+                        RespSerializer::writeBulkString(conn.outgoing(), "unsubscribe");
+                        RespSerializer::writeBulkString(conn.outgoing(), ch);
+                        RespSerializer::writeInteger(conn.outgoing(),
+                                                     static_cast<int64_t>(remaining));
+                    }
+                }
+            } else {
+                for (size_t i = 1; i < args.size(); ++i) {
+                    size_t remaining = pubsubRegistry.unsubscribe(args[i], conn);
+                    RespSerializer::writeArrayHeader(conn.outgoing(), 3);
+                    RespSerializer::writeBulkString(conn.outgoing(), "unsubscribe");
+                    RespSerializer::writeBulkString(conn.outgoing(), args[i]);
+                    RespSerializer::writeInteger(conn.outgoing(),
+                                                 static_cast<int64_t>(remaining));
+                }
+            }
+        }
+    });
+
+    // Register PUBLISH — needs PubSubRegistry&.
+    commandTable.registerCommand({"PUBLISH", 3, false,
+        [&pubsubRegistry](Database& /*cmdDb*/, Connection& conn,
+                          const std::vector<std::string>& args) {
+            // PUBLISH channel message
+            size_t delivered = pubsubRegistry.publish(args[1], args[2]);
+            RespSerializer::writeInteger(conn.outgoing(),
+                                         static_cast<int64_t>(delivered));
+        }
+    });
+
     // ── Wire active expiry timer (Phase 3) + AOF tick (Phase 4) ────────
     // Every 100ms: expire keys, fsync if EVERYSEC, check rewrite child.
     eventLoop.setTimerCallback([&db, &aofWriter]() {
@@ -144,10 +246,44 @@ int main(int argc, char* argv[]) {
                     auto cmd = parser.parse(conn.incoming());
                     if (!cmd.has_value()) break;  // incomplete frame
                     if (cmd->empty()) continue;   // empty command (null array)
+
+                    // Uppercase command name for comparisons.
+                    std::string cmdName = (*cmd)[0];
+                    std::transform(cmdName.begin(), cmdName.end(),
+                                   cmdName.begin(), ::toupper);
+
+                    // ── Subscriber mode gate (Phase 6) ─────────────────
+                    // In subscriber mode, only allow SUBSCRIBE, UNSUBSCRIBE,
+                    // PING, and QUIT.
+                    if (conn.inSubscribeMode() &&
+                        cmdName != "SUBSCRIBE" && cmdName != "UNSUBSCRIBE" &&
+                        cmdName != "PING" && cmdName != "QUIT") {
+                        RespSerializer::writeError(conn.outgoing(),
+                            "ERR Can't execute '" + (*cmd)[0] +
+                            "': only (P)SUBSCRIBE / (P)UNSUBSCRIBE / "
+                            "PING / QUIT are allowed in this context");
+                        continue;
+                    }
+
+                    // ── Transaction queuing (Phase 6) ──────────────────
+                    // If in MULTI mode, queue commands instead of executing
+                    // (except EXEC, DISCARD, MULTI themselves).
+                    if (conn.txn.has_value() &&
+                        cmdName != "EXEC" && cmdName != "DISCARD" &&
+                        cmdName != "MULTI") {
+                        conn.txn->queuedCommands.push_back(*cmd);
+                        RespSerializer::writeSimpleString(conn.outgoing(),
+                                                          "QUEUED");
+                        continue;
+                    }
+
                     commandTable.dispatch(db, conn, *cmd);
+
                     // INV-1: Log to AOF only AFTER successful dispatch,
-                    // and only for write commands.
-                    if (aofWriter.isEnabled() &&
+                    // and only for write commands (not inside transactions
+                    // — EXEC handler logs its own queued write commands).
+                    if (cmdName != "EXEC" &&
+                        aofWriter.isEnabled() &&
                         commandTable.isWriteCommand((*cmd)[0])) {
                         aofWriter.log(*cmd);
                     }
@@ -183,6 +319,19 @@ int main(int argc, char* argv[]) {
         // ── Advance incremental rehashing ───────────────────────────────
         db.rehashStep();
 
+        // ── Sweep: enable EPOLLOUT for connections with pending output ──
+        // Necessary because PUBLISH (and future cross-connection writes)
+        // can fill a subscriber's outgoing buffer from another fd's handler.
+        for (auto& [sfd, sptr] : connections) {
+            if (!sptr->wantClose() && sptr->outgoing().readableBytes() > 0) {
+                sptr->setWantWrite(true);
+                uint32_t desired = 0;
+                if (sptr->wantRead())  desired |= EPOLLIN;
+                if (sptr->wantWrite()) desired |= EPOLLOUT;
+                eventLoop.modFd(sfd, desired);
+            }
+        }
+
         // ── Cleanup closed connections ─────────────────────────────────
         std::vector<int> toClose;
         for (auto& [cfd, cptr] : connections) {
@@ -191,6 +340,11 @@ int main(int argc, char* argv[]) {
             }
         }
         for (int cfd : toClose) {
+            // Phase 6: Remove from pub/sub before destroying Connection.
+            auto it2 = connections.find(cfd);
+            if (it2 != connections.end()) {
+                pubsubRegistry.removeConnection(*it2->second);
+            }
             eventLoop.removeFd(cfd);
             connections.erase(cfd);  // unique_ptr dtor closes the fd.
         }

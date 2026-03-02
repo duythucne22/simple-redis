@@ -71,9 +71,19 @@ public:
     /// Used by future phases (TTL, etc.) that need direct entry access.
     HashTable& table() { return table_; }
 
+    /// Delete all keys. Clears hash table, TTL heap, and memory counter.
+    void flushdb();
+
+    /// Return estimated memory usage of all stored objects (bytes).
+    size_t usedMemory() const { return usedMemory_; }
+
+    /// Return the number of keys that have a TTL set.
+    size_t expiryCount() const;
+
 private:
     HashTable table_;
     TTLHeap ttlHeap_;
+    size_t usedMemory_ = 0;  // running estimate — updated on set/del/flush
 
     /// Check if an entry is expired and delete it if so (lazy expiry).
     /// Returns true if the entry was expired and removed.

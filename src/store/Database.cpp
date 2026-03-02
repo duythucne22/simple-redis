@@ -13,6 +13,8 @@ static int64_t nowMs() {
 bool Database::checkAndExpire(const std::string& key, HTEntry* entry) {
     if (entry->expireAt < 0) return false;  // no expiry set
     if (nowMs() < entry->expireAt) return false;  // not yet expired
+    // Subtract memory before deletion.
+    usedMemory_ -= entry->value.memoryUsage();
     // INV-7: Remove from heap when lazy-expiring a key.
     ttlHeap_.remove(key);
     table_.del(key);
@@ -38,6 +40,10 @@ void Database::set(const std::string& key, const std::string& value) {
     // INV-6: SET clears any existing TTL on the key.
     ttlHeap_.remove(key);
 
+    // Subtract old memory if key already exists.
+    HTEntry* old = table_.find(key);
+    if (old) usedMemory_ -= old->value.memoryUsage();
+
     // If the key already exists in the hash table, we need to reset expireAt.
     // After table_.set(), find the entry and ensure expireAt = -1.
     table_.set(key, RedisObject::createString(value));
@@ -46,10 +52,14 @@ void Database::set(const std::string& key, const std::string& value) {
     HTEntry* entry = table_.find(key);
     if (entry) {
         entry->expireAt = -1;
+        usedMemory_ += entry->value.memoryUsage();
     }
 }
 
 bool Database::del(const std::string& key) {
+    // Subtract memory before deletion.
+    HTEntry* entry = table_.find(key);
+    if (entry) usedMemory_ -= entry->value.memoryUsage();
     // INV-5: Remove from heap when a key is DEL'd.
     ttlHeap_.remove(key);
     return table_.del(key);
@@ -147,6 +157,9 @@ void Database::activeExpireCycle(int maxWork) {
     int64_t now = nowMs();
     auto expired = ttlHeap_.popExpired(now, maxWork);
     for (const auto& key : expired) {
+        // Subtract memory before deletion.
+        HTEntry* entry = table_.find(key);
+        if (entry) usedMemory_ -= entry->value.memoryUsage();
         // The heap entry is already removed by popExpired.
         table_.del(key);
     }
@@ -165,5 +178,23 @@ HTEntry* Database::findEntry(const std::string& key) {
 }
 
 void Database::setObject(const std::string& key, RedisObject obj) {
+    // Subtract old memory if key already exists.
+    HTEntry* old = table_.find(key);
+    if (old) usedMemory_ -= old->value.memoryUsage();
+
     table_.set(key, std::move(obj));
+
+    // Add new memory.
+    HTEntry* entry = table_.find(key);
+    if (entry) usedMemory_ += entry->value.memoryUsage();
+}
+
+void Database::flushdb() {
+    table_.flushAll();
+    ttlHeap_ = TTLHeap{};  // reset heap
+    usedMemory_ = 0;
+}
+
+size_t Database::expiryCount() const {
+    return table_.expiryCount();
 }

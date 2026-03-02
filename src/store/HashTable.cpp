@@ -321,3 +321,31 @@ void HashTable::rehashStep(int nSteps) {
         migrateOneSlot();
     }
 }
+
+// ── Flush (delete all entries) ────────────────────────────────────────────
+
+void HashTable::flushAll() {
+    freeTable(primary_);
+    freeTable(rehash_);
+    isRehashing_ = false;
+    rehashIdx_   = 0;
+}
+
+// ── Count entries with TTL ────────────────────────────────────────────────
+
+size_t HashTable::expiryCount() const {
+    size_t count = 0;
+    auto countInTable = [&](const Table& table) {
+        if (!table.slots) return;
+        for (size_t i = 0; i < table.capacity; ++i) {
+            HTEntry* entry = table.slots[i];
+            while (entry) {
+                if (entry->expireAt >= 0) ++count;
+                entry = entry->next;
+            }
+        }
+    };
+    countInTable(primary_);
+    countInTable(rehash_);
+    return count;
+}

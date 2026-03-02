@@ -59,6 +59,15 @@ public:
     /// Called once per event loop tick to spread rehash cost.
     void rehashStep(int nSteps = 128);
 
+    /// Delete all entries from both tables. Resets to empty state.
+    /// Used by FLUSHDB. Does NOT deallocate the primary_ slot array
+    /// — only entry nodes are freed and sizes reset.
+    void flushAll();
+
+    /// Count entries that have a TTL set (expireAt >= 0).
+    /// Used by INFO keyspace section.
+    size_t expiryCount() const;
+
 private:
     /// Internal table structure — an array of linked-list heads.
     struct Table {

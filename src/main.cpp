@@ -1,5 +1,6 @@
 #include "cmd/CommandTable.h"
 #include "cmd/PubSubRegistry.h"
+#include "cmd/ServerCommands.h"
 #include "net/Connection.h"
 #include "net/EventLoop.h"
 #include "net/Listener.h"
@@ -10,6 +11,7 @@
 #include "store/Database.h"
 
 #include <algorithm>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -65,6 +67,13 @@ int main(int argc, char* argv[]) {
     Database     db;
     CommandTable commandTable;
     RespParser   parser;
+
+    // ── Server metrics (Phase 7) ───────────────────────────────────────
+    ServerMetrics metrics;
+    metrics.tcpPort = static_cast<uint16_t>(port);
+
+    // Register INFO / DBSIZE / FLUSHDB.
+    ServerCommands::registerAll(commandTable, metrics);
 
     // ── AOF persistence (Phase 4) ──────────────────────────────────────
     AOFWriter aofWriter(kAOFFilename, kAOFPolicy);
@@ -201,6 +210,9 @@ int main(int argc, char* argv[]) {
 
     // ── Main loop ──────────────────────────────────────────────────────
     while (g_running) {
+        // Update connected clients count for INFO command.
+        metrics.connectedClients = connections.size();
+
         int n = eventLoop.poll(100);  // 100 ms timeout
         if (n < 0) break;            // epoll error
 
@@ -277,7 +289,17 @@ int main(int argc, char* argv[]) {
                         continue;
                     }
 
+                    // \u2500\u2500 Timed dispatch (Phase 7) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+                    auto dispatchStart = std::chrono::steady_clock::now();
                     commandTable.dispatch(db, conn, *cmd);
+                    auto dispatchEnd = std::chrono::steady_clock::now();
+
+                    int64_t durationUs =
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            dispatchEnd - dispatchStart).count();
+                    metrics.totalCommandsProcessed++;
+                    metrics.recordLatency(durationUs);
+                    metrics.maybeRecordSlowLog(durationUs, *cmd);
 
                     // INV-1: Log to AOF only AFTER successful dispatch,
                     // and only for write commands (not inside transactions

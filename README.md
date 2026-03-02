@@ -20,15 +20,6 @@ A Redis-compatible server written from scratch in C++17. Single-threaded, event-
 - **Server introspection** — INFO, DBSIZE, FLUSHDB, latency histogram, slow log
 - **50K+ ops/sec** — SET 52K, GET 78K, pipelined GET 523K ops/sec
 
-## Tech Stack
-
-- **Language** — C++17
-- **Networking** — POSIX sockets + `epoll` event loop
-- **Protocol** — RESP2
-- **Storage internals** — custom hash table, skiplist, TTL min-heap
-- **Persistence** — AOF with background rewrite (`fork()`)
-- **Tooling** — Make, Bash scripts, `redis-cli`, `redis-benchmark`
-
 ## Language & Platform Support
 
 - **Language support** — C++17 compiler required (GCC ≥ 7 or Clang ≥ 5)

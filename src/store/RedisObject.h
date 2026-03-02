@@ -84,4 +84,8 @@ struct RedisObject {
 
     /// Return the string representation (STRING type only).
     std::string asString() const;
+
+    /// Estimate total memory consumed by this object (struct + dynamic data).
+    /// Used by Database to maintain a running usedMemory_ counter for INFO.
+    size_t memoryUsage() const;
 };
